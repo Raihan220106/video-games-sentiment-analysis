@@ -1,12 +1,14 @@
-pandas>=2.0.0
-numpy>=1.24.0
-scikit-learn>=1.3.0
-joblib>=1.3.0
-datasets>=2.14.0
-requests>=2.31.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
-nltk>=3.8.0
-tqdm>=4.66.0
+# Requirements untuk Proyek Video Games Sentiment Analysis
+# Amazon Reviews 2023 - Binary Sentiment Classification Pipeline
+
+pandas>=2.0.0,<=2.3.2
+numpy>=1.24.0,<=2.3.3
+scikit-learn>=1.3.0,<=1.7.2
+joblib>=1.3.0,<=1.5.2
+requests>=2.31.0,<=2.33.1
+matplotlib>=3.7.0,<=3.10.9
+seaborn>=0.12.0,<=0.13.2
+lightgbm>=4.0.0,<=4.7.0
+nltk>=3.8.0,<=3.10.4
+tqdm>=4.66.0,<=4.67.3
 ipykernel>=6.25.0
-lightgbm>=4.0.0

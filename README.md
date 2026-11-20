@@ -1,157 +1,93 @@
-# 🎮 Video Games Sentiment Analysis
+# 🎮 Video Games Sentiment Analysis (Amazon Reviews 2023)
 
-Repositori ini berisi implementasi pipeline **Natural Language Processing (NLP)** dan **Machine Learning** untuk menganalisis dan mengklasifikasikan sentimen ulasan video game (Positif dan Negatif) menggunakan dataset **Amazon Reviews 2023** kategori **Video_Games**.
-
-Proyek ini mencakup alur lengkap:
-1. **Persiapan Lingkungan & Repositori**
-2. **Pemuatan Data Bertahap (Streaming / Chunking)** dengan filter timestamp $\le 31$ Desember 2019
-3. **Pembersihan Data & Pelabelan Biner (Preprocessing)**
-4. **Pembagian Data (Train-Validation Split)** (*Time-based Split* & *Stratified Split*)
-5. **Ekstraksi Fitur & Pemodelan Machine Learning (Pipeline TF-IDF + Class Imbalance Handling)**
-6. **Evaluasi dengan Metrik Macro-F1 & Hyperparameter Tuning**
-7. **Penyimpanan Model & Pengujian Inferensi Real-time**
+Repositori ini memuat implementasi *end-to-end* **Natural Language Processing (NLP)** dan **Machine Learning** untuk klasifikasi sentimen biner (Positif vs Negatif) pada ulasan video game dari dataset **Amazon Reviews 2023** (*cutoff* $\le 31$ Desember 2019).
 
 ---
 
-## 📁 Struktur Proyek
+## 🛠️ 1. Metode yang Digunakan
 
-```text
-Task/
-│
-├── data/
-│   ├── video_games_preprocessed.csv         # Dataset bersih siap latih (hasil Tahap 3)
-│   ├── video_games_reviews_2019.csv         # Dataset ulasan tersaring (<= 31 Des 2019)
-│   └── video_games_reviews.csv              # Dataset ulasan sampel awal
-│
-├── model/
-│   ├── model_sentimen.joblib                # Model Pipeline TERBAIK (Tuned C=10.0, Macro-F1 0.8726)
-│   ├── model_config.json                    # Metadata konfigurasi & threshold optimal
-│   ├── model_linearsvc.joblib               # Pipeline LinearSVC (Calibrated)
-│   ├── model_logistic_regression.joblib     # Pipeline Logistic Regression (balanced)
-│   ├── model_multinomial_nb.joblib          # Pipeline Multinomial Naive Bayes
-│   ├── model_lightgbm.joblib                # Pipeline LightGBM (balanced)
-│   └── model_sentimen_time_based.joblib     # Pipeline evaluasi Time-based Split
-│
-├── model_sentimen.joblib                    # Salinan model terbaik di root direktori
-├── load_data.py                             # Modul streaming, pra-pemrosesan, split & pipeline
-├── notebook.ipynb                           # Jupyter Notebook utama (alur lengkap ML & visualisasi)
-├── video_games_sentiment_analysis.ipynb     # Salinan deskriptif untuk notebook analisis sentimen
-├── requirements.txt                         # Daftar pustaka & dependensi
-├── .gitignore                               # Aturan pengabaian berkas Git
-└── README.md                                # Dokumentasi proyek lengkap
-```
+Pipeline pemodelan dibangun menggunakan pustaka `scikit-learn` dalam satu objek `Pipeline`:
+1. **Ekstraksi Fitur Teks:** `TfidfVectorizer` dengan rentang n-gram `(1, 2)` (unigram & bigram), pembobotan `sublinear_tf=True`, batas fitur `max_features=20.000`, serta daftar stop words kustom yang **mempertahankan kata negasi** (*not, no, never, without, nothing*).
+2. **Model Klasifikasi Pilihan:** `LogisticRegression` dengan penalti L2, bobot kelas seimbang (`class_weight='balanced'`), nilai regularisasi optimal $C=10.0$, dan ambang batas probabilitas (*optimal probability threshold*) $P(Y=1) \ge 0.49$.
+3. **Model Pembanding:** `LinearSVC` (Calibrated), `LightGBM`, dan `MultinomialNB`.
 
 ---
 
-## 🎯 Tahap 6: Evaluasi dengan Metrik Macro-F1 & Hyperparameter Tuning
+## 🎯 2. Alasan Pemilihan Metode
 
-### 1. Mengapa Metrik Macro-F1 Digunakan?
-Dataset ulasan game memiliki ketidakseimbangan kelas (*class imbalance*) alami:
-- **Positif (1)**: ~87%
-- **Negatif (0)**: ~13%
+1. **Efisiensi Komputasi Tinggi pada Teks Berdimensi Tinggi:**
+   TF-IDF menghasilkan matriks jarang (*sparse matrix*) yang sangat hemat memori (RAM) dan cepat dikomputasikan dibandingkan model berbasis *deep learning* atau *transformer* (seperti BERT), sehingga sangat ideal untuk dataset teks ulasan berskala besar.
+2. **Penangkapan Konteks Negasi (N-gram 1-2):**
+   Ulasan game sering kali menggunakan frasa negasi seperti *"not good"*, *"no fun"*, atau *"never buy"*. Penggunaan bigram memastikan sentimen negatif terdeteksi secara akurat tanpa terpotong menjadi kata positif *"good"*.
+3. **Penanganan Ketidakseimbangan Kelas (*Class Imbalance Handling*):**
+   Dataset memiliki rasio alami sekitar 87% Positif vs 13% Negatif. Parameter `class_weight='balanced'` memberikan penalti yang berbanding terbalik dengan frekuensi kelas, sehingga model tidak bias ke kelas mayoritas dan mampu mendeteksi komplain pemain dengan sensitivitas tinggi.
+4. **Kalibrasi Probabilitas:**
+   Logistic Regression menghasilkan estimasi probabilitas kontinu yang memungkinkan penyesuaian ambang batas (*threshold tuning*) untuk memaksimalkan *trade-off* presisi dan recall.
 
-Jika hanya mengandalkan metrik **Akurasi**, model naif yang selalu menebak "Positif" untuk setiap ulasan akan memperoleh akurasi semu sebesar 87%, meskipun gagal total mendeteksi komplain pemain.
-Metrik **Macro-F1** memberikan bobot setara (*unweighted mean*) untuk kedua kelas:
+---
+
+## 📊 3. Cara Pembagian Data Latih & Validasi
+
+Eksperimen menerapkan dua strategi pembagian:
+1. **Stratified Split (80:20) — *Strategi Utama*:**
+   - **Data Latih (Train):** 3.585 ulasan (80%)
+   - **Data Validasi (Validation):** 897 ulasan (20%)
+   - **Alasan:** Menjaga rasio kelas minoritas (ulasan negatif ~13%) tetap identik dan representatif di kedua set data, sehingga evaluasi model tidak bias dan menghasilkan estimasi generalisasi yang stabil.
+2. **Time-based Split (Train $\le 2018$, Validation $2019$) — *Strategi Pembanding*:**
+   - **Data Latih:** 3.537 ulasan ($\le 2018$, 78.9%)
+   - **Data Validasi:** 945 ulasan ($2019$, 21.1%)
+   - **Alasan:** Mensimulasikan skenario nyata (*real-world deployment*) di mana model dilatih menggunakan data masa lalu untuk memprediksi data ulasan baru di masa depan tanpa kebocoran temporal (*temporal data leakage*).
+
+---
+
+## 📈 4. Hasil Evaluasi Skor Macro-F1
+
+Evaluasi dilakukan pada data validasi (*Stratified Split*) menggunakan metrik **Macro-F1** untuk memastikan kedua kelas dinilai secara berimbang:
+
 $$\text{Macro-F1} = \frac{\text{F1}_{\text{Negatif}} + \text{F1}_{\text{Positif}}}{2}$$
-Hal ini menjamin model dinilai secara objektif dan **tidak berat sebelah**, memastikan kelas minoritas (ulasan negatif) terdeteksi dengan presisi dan recall yang seimbang.
+
+### Perbandingan Model & Hasil Tuning:
+
+| Model / Konfigurasi | Akurasi | F1 (Negatif) | F1 (Positif) | Macro-F1 |
+| :--- | :---: | :---: | :---: | :---: |
+| Multinomial Naive Bayes | 87.63% | 0.0435 | 0.9339 | 0.4887 |
+| LightGBM (`class_weight='balanced'`) | 92.31% | 0.7054 | 0.9568 | 0.8311 |
+| LinearSVC (`class_weight='balanced'`) | 94.20% | 0.7554 | 0.9678 | 0.8616 |
+| Logistic Regression Baseline ($C=1.0, \text{th}=0.50$) | 91.97% | 0.7188 | 0.9532 | 0.8360 |
+| **Logistic Regression Tuned ($C=10.0, \text{th}=0.49$)** | **94.54%** | **0.7763** | **0.9689** | **0.8726** |
+
+> **Kesimpulan:** Model terbaik adalah **TF-IDF + Logistic Regression ($C=10.0$, Threshold $=0.49$)** dengan skor **Macro-F1 sebesar 0.8726** dan **Akurasi 94.54%**, mampu mendeteksi 75% ulasan negatif dengan presisi 81%.
 
 ---
 
-### 2. Hyperparameter Tuning
+## 🚀 5. Cara Menjalankan & Memuat Model
 
-#### A. Tuning Nilai Regularisasi $C$ pada Logistic Regression
-Nilai $C$ mengontrol kekuatan regularisasi L2 (semakin besar $C$, semakin rendah penalti regularisasi):
+```bash
+# 1. Instal dependensi
+pip install -r requirements.txt
 
-| Nilai $C$ | Akurasi | F1 (Negatif) | F1 (Positif) | Macro-F1 |
-| :---: | :---: | :---: | :---: | :---: |
-| 0.05 | 86.73% | 0.6270 | 0.9193 | 0.7731 |
-| 0.10 | 87.40% | 0.6390 | 0.9237 | 0.7813 |
-| 0.50 | 90.30% | 0.6813 | 0.9428 | 0.8121 |
-| 1.00 *(Default)* | 91.97% | 0.7188 | 0.9532 | 0.8360 |
-| 2.00 | 93.31% | 0.7521 | 0.9613 | 0.8567 |
-| 5.00 | 94.09% | 0.7644 | 0.9662 | 0.8653 |
-| **10.00 *(Optimal)*** | **94.31%** | **0.7692** | **0.9676** | **0.8684** |
-
-> Nilai **$C = 10.0$** memberikan kapasitas optimal bagi model untuk mempelajari bobot kata kunci negatif spesifik tanpa mengalami overfitting.
-
-#### B. Tuning Ambang Batas Probabilitas (*Probability Threshold Tuning*)
-Secara default, model mengklasifikasikan kelas 1 jika $P(Y=1) \ge 0.50$. Karena proporsi data tidak seimbang, ambang batas dipindai dari $0.30$ hingga $0.80$:
-- **Ambang Batas Optimal**: $P(Y=1) \ge \mathbf{0.49}$
-- **Hasil Metrik Optimal**:
-  - **Akurasi**: **94.54%**
-  - **Macro-F1**: **0.8726**
-  - **F1 (Negatif)**: **0.7763** (Precision: 0.81, Recall: 0.75)
-  - **F1 (Positif)**: **0.9689** (Precision: 0.96, Recall: 0.97)
-
----
-
-### 📊 Perbandingan Sebelum vs Sesudah Tuning
-
-```text
-=== SEBELUM TUNING (C=1.0, Threshold=0.50) ===
-              precision    recall  f1-score   support
- Negatif (0)       0.66      0.79      0.72       116
- Positif (1)       0.97      0.94      0.95       781
-    accuracy                           0.92       897
-   macro avg       0.81      0.87      0.84       897
-
-=== SESUDAH TUNING (C=10.0, Threshold=0.49) ===
-              precision    recall  f1-score   support
- Negatif (0)       0.81      0.75      0.78       116
- Positif (1)       0.96      0.97      0.97       781
-    accuracy                           0.95       897
-   macro avg       0.89      0.86      0.87       897
+# 2. Jalankan notebook (Restart & Run All)
+jupyter notebook notebook.ipynb
 ```
-
----
-
-## 💾 Tahap 7: Penyimpanan Model & Uji Muat Ulang (joblib.load)
-
-Pipeline model terbaik yang telah dituning disimpan ke dalam berkas serialisasi menggunakan `joblib.dump`:
-- `model_sentimen.joblib` (root direktori proyek)
-- `model/model_sentimen.joblib` (folder `model/` terstruktur)
-- `model/model_config.json` (metadata performa & parameter model)
-
-### 🧪 Contoh Pemuatan Ulang & Pengujian Ulasan Baru
 
 ```python
+# Inferensi mandiri dengan file model tersimpan
 import joblib
 
-# 1. Muat ulang pipeline model terbaik
-pipeline = joblib.load('model_sentimen.joblib')
-
-# 2. Kalimat ulasan baru
-ulasan_baru = [
-    "Masterpiece of RPG! The combat is smooth, story is deep, and visuals are breathtaking.",
-    "Terrible experience. The game constantly crashes every 10 minutes and save files get corrupted.",
-    "Not good at all. I thought it would be fun, but the combat is clunky and gameplay loops are boring.",
-    "Great co-op fun with friends! Excellent soundtrack, responsive controls, and challenging boss fights.",
-    "Complete waste of money! Full of game-breaking bugs, laggy servers, and aggressive microtransactions.",
-    "The story is surprisingly emotional and voice acting is top notch. Definitely worth playing."
-]
-
-# 3. Prediksi label dan probabilitas
-prediksi = pipeline.predict(ulasan_baru)
-probabilitas = pipeline.predict_proba(ulasan_baru)
-
-# 4. Tampilkan hasil
-for teks, pred, prob in zip(ulasan_baru, prediksi, probabilitas):
-    label = "POSITIF" if pred == 1 else "NEGATIF"
-    confidence = prob[pred] * 100
-    print(f"[{label} ({confidence:.2f}%)] -> {teks}")
-```
-
-#### Hasil Pengujian:
-```text
-[POSITIF (86.65%)] -> Masterpiece of RPG! The combat is smooth, story is deep, and visuals are breathtaking.
-[NEGATIF (67.63%)] -> Terrible experience. The game constantly crashes every 10 minutes and save files get corrupted.
-[NEGATIF (93.63%)] -> Not good at all. I thought it would be fun, but the combat is clunky and gameplay loops are boring.
-[POSITIF (99.48%)] -> Great co-op fun with friends! Excellent soundtrack, responsive controls, and challenging boss fights.
-[NEGATIF (88.40%)] -> Complete waste of money! Full of game-breaking bugs, laggy servers, and aggressive microtransactions.
-[POSITIF (95.97%)] -> The story is surprisingly emotional and voice acting is top notch. Definitely worth playing.
+model = joblib.load('model_sentimen.joblib')
+sample = ["Great graphics and smooth combat!", "Game crashed constantly, waste of money."]
+print(model.predict(sample))  # Output: [1, 0] -> [Positif, Negatif]
 ```
 
 ---
 
-## 👤 Penulis
-- **Raihan Muhammad Riswandi** ([@Raihan220106](https://github.com/Raihan220106))
+## 📂 Struktur Repositori
+- `notebook.ipynb`: Notebook utama (*Restart & Run All* terverifikasi).
+- `video_games_sentiment_analysis.ipynb`: Salinan berkas analisis sentimen.
+- `model_sentimen.joblib`: Berkas model serialisasi pipeline terbaik di root direktori.
+- `model/`: Direktori penyimpanan model (`model_sentimen.joblib`, model pembanding, dan `model_config.json`).
+- `requirements.txt`: Daftar pustaka dependensi dan versinya.
+- `load_data.py`: Skrip modular untuk streaming, preprocessing, dan pipeline.
+- `README.md`: Dokumentasi proyek ringkas.
+
+**Tautan Repositori GitHub:** [https://github.com/Raihan220106/video-games-sentiment-analysis](https://github.com/Raihan220106/video-games-sentiment-analysis)
