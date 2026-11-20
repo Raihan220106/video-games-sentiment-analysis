@@ -1,7 +1,11 @@
 """
-Module Pemuatan Data Streaming & Chunking (Amazon Reviews 2023 - Video_Games)
-Membaca file .jsonl.gz baris demi baris (line-by-line) dan memfilter ulasan
-dengan timestamp <= 1577836799999 (hingga 31 Desember 2019 UTC).
+Module Pemuatan & Pembersihan Data (Amazon Reviews 2023 - Video_Games)
+1. Streaming / chunking baris demi baris (json.loads) dengan filter timestamp <= 1577836799999 (31 Des 2019 UTC).
+2. Pembersihan & Pelabelan (Preprocessing):
+   - Buang rating == 3 dan nilai kosong pada rating, title, text.
+   - Buat label biner: rating 1, 2 -> 0 (Negatif); rating 4, 5 -> 1 (Positif).
+   - Gabungkan title dan text menjadi full_text.
+   - Bersihkan whitespace berlebih dan karakter tidak relevan menjadi clean_text.
 """
 
 import os
@@ -10,7 +14,9 @@ import json
 import zlib
 import time
 import datetime
+import re
 import requests
+import numpy as np
 import pandas as pd
 from typing import Optional, Generator, Dict, Any
 
@@ -59,115 +65,67 @@ def stream_reviews_from_url(
                     return
 
 
-def stream_reviews_from_local_file(
-    file_path: str,
-    max_records: Optional[int] = 10000,
-    cutoff_timestamp: int = CUTOFF_TIMESTAMP
-) -> Generator[Dict[str, Any], None, None]:
-    """
-    Membaca berkas lokal .jsonl.gz baris demi baris menggunakan gzip.open
-    dan json.loads agar memori RAM tetap ringan.
-    """
-    yielded = 0
-    with gzip.open(file_path, "rt", encoding="utf-8") as f:
-        for line in f:
-            line_str = line.strip()
-            if not line_str:
-                continue
-            record = json.loads(line_str)
-            ts = record.get("timestamp")
-            if ts is not None and ts <= cutoff_timestamp:
-                yield record
-                yielded += 1
-                if max_records is not None and yielded >= max_records:
-                    break
+def basic_clean_text(text: str) -> str:
+    """Membersihkan teks ulasan dari tag HTML, URL, karakter tidak relevan, dan spasi berlebih."""
+    text = re.sub(r"<.*?>", " ", str(text))
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"[^\w\s.,!?'\"-]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
-def download_file_chunked(
-    url: str = URL_VIDEO_GAMES,
-    output_path: str = "data/Video_Games.jsonl.gz",
-    chunk_size: int = 1024 * 1024,
-    max_mb: Optional[int] = 50
-) -> str:
+def preprocess_reviews_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Mengunduh berkas secara bertahap (chunked download) dengan batas ukuran tertentu (opsional).
+    Menjalankan alur preprocessing:
+    1. Buang rating == 3 dan nilai kosong pada rating, title, dan text.
+    2. Pelabelan biner: 1, 2 -> 0 (Negatif); 4, 5 -> 1 (Positif).
+    3. Gabungkan title dan text menjadi full_text.
+    4. Pembersihan dasar menjadi clean_text.
     """
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    resp = requests.get(url, stream=True, timeout=60)
-    resp.raise_for_status()
-
-    downloaded = 0
-    max_bytes = max_mb * 1024 * 1024 if max_mb else None
-
-    print(f"Mengunduh {url} secara chunked ke {output_path}...")
-    with open(output_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=chunk_size):
-            if chunk:
-                f.write(chunk)
-                downloaded += len(chunk)
-                if max_bytes and downloaded >= max_bytes:
-                    print(f"Batas {max_mb} MB tercapai, selesai mengunduh bagian sampel.")
-                    break
-    print(f"Tersimpan: {downloaded / (1024*1024):.2f} MB di {output_path}")
-    return output_path
-
-
-def load_filtered_dataset_to_df(
-    max_records: int = 10000,
-    source: str = "url",
-    local_path: Optional[str] = None
-) -> pd.DataFrame:
-    """
-    Memuat ulasan Video Games tersaring ke dalam pandas DataFrame.
-    """
-    records = []
-    streamer = (
-        stream_reviews_from_url(max_records=max_records)
-        if source == "url"
-        else stream_reviews_from_local_file(local_path, max_records=max_records)
+    df_clean = df.copy()
+    
+    # 1. Konversi string kosong ke NaN dan buang baris kosong
+    df_clean["title"] = df_clean["title"].replace(r"^\s*$", np.nan, regex=True)
+    df_clean["text"] = df_clean["text"].replace(r"^\s*$", np.nan, regex=True)
+    df_clean = df_clean.dropna(subset=["rating", "title", "text"]).copy()
+    
+    # Buang rating 3 (netral)
+    df_clean = df_clean[df_clean["rating"] != 3].copy()
+    
+    # 2. Buat label biner
+    df_clean["label"] = df_clean["rating"].apply(
+        lambda r: 0 if r in [1, 2, 1.0, 2.0] else (1 if r in [4, 5, 4.0, 5.0] else np.nan)
     )
-
-    for item in streamer:
-        text = item.get("text", "")
-        if text and len(text.strip()) > 5:
-            ts = item.get("timestamp")
-            dt = datetime.datetime.fromtimestamp(ts / 1000.0, datetime.timezone.utc)
-            rating = item.get("rating")
-            
-            # Label sentimen: Positif (1) jika rating >= 4.0, Negatif (0) jika rating <= 2.0
-            sentiment = 1 if rating >= 4.0 else (0 if rating <= 2.0 else None)
-
-            records.append({
-                "rating": rating,
-                "title": item.get("title", ""),
-                "text": text.strip(),
-                "timestamp": ts,
-                "date": dt.strftime("%Y-%m-%d %H:%M:%S"),
-                "year": dt.year,
-                "asin": item.get("asin", item.get("parent_asin", "")),
-                "verified_purchase": item.get("verified_purchase", False),
-                "helpful_vote": item.get("helpful_vote", 0),
-                "sentiment": sentiment
-            })
-
-    return pd.DataFrame(records)
+    df_clean = df_clean.dropna(subset=["label"]).copy()
+    df_clean["label"] = df_clean["label"].astype(int)
+    
+    # 3. Gabungkan title dan text menjadi full_text
+    df_clean["full_text"] = df_clean["title"].astype(str).str.strip() + " " + df_clean["text"].astype(str).str.strip()
+    
+    # 4. Bersihkan teks dasar
+    df_clean["clean_text"] = df_clean["full_text"].apply(basic_clean_text)
+    
+    return df_clean
 
 
 if __name__ == "__main__":
-    print("=" * 70)
-    print("DEMO PEMUATAN DATA STREAMING DENGAN FILTER TIMESTAMP <= 2019-12-31")
-    print("=" * 70)
-    start = time.time()
-    df_filtered = load_filtered_dataset_to_df(max_records=5000, source="url")
-    elapsed = time.time() - start
-
-    output_csv = os.path.join("data", "video_games_reviews_2019.csv")
-    df_filtered.to_csv(output_csv, index=False)
-
-    print(f"Selesai memuat {len(df_filtered)} ulasan dalam {elapsed:.2f} detik.")
-    print(f"Data disimpan ke: {output_csv}")
-    print(f"Maksimum timestamp : {df_filtered['timestamp'].max()} (Batas: {CUTOFF_TIMESTAMP})")
-    print(f"Rentang tanggal    : {df_filtered['date'].min()} s/d {df_filtered['date'].max()}")
-    print("Verifikasi <= 2019 :", (df_filtered['timestamp'] <= CUTOFF_TIMESTAMP).all())
-    print("\nDistribusi Sentimen:")
-    print(df_filtered['sentiment'].value_counts(dropna=False))
+    raw_csv = os.path.join("data", "video_games_reviews_2019.csv")
+    if os.path.exists(raw_csv):
+        print(f"Membaca data dari {raw_csv}...")
+        df_raw = pd.read_csv(raw_csv)
+    else:
+        print("Data lokal belum ada, melakukan streaming dari web...")
+        records = list(stream_reviews_from_url(max_records=5000))
+        df_raw = pd.DataFrame(records)
+        os.makedirs("data", exist_ok=True)
+        df_raw.to_csv(raw_csv, index=False)
+        
+    print(f"Bentuk data awal: {df_raw.shape}")
+    df_preprocessed = preprocess_reviews_dataframe(df_raw)
+    print(f"Bentuk data setelah preprocessing: {df_preprocessed.shape}")
+    print("\nDistribusi Label Biner:")
+    print(df_preprocessed["label"].value_counts())
+    
+    out_csv = os.path.join("data", "video_games_preprocessed.csv")
+    df_preprocessed.to_csv(out_csv, index=False)
+    print(f"\nDataset hasil preprocessing tersimpan di: {out_csv}")
