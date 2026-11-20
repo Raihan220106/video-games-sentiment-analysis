@@ -105,34 +105,50 @@ Secara default, model mengklasifikasikan kelas 1 jika $P(Y=1) \ge 0.50$. Karena 
 
 ---
 
-## 💡 Cara Menjalankan Inferensi dengan Threshold Optimal
+## 💾 Tahap 7: Penyimpanan Model & Uji Muat Ulang (joblib.load)
+
+Pipeline model terbaik yang telah dituning disimpan ke dalam berkas serialisasi menggunakan `joblib.dump`:
+- `model_sentimen.joblib` (root direktori proyek)
+- `model/model_sentimen.joblib` (folder `model/` terstruktur)
+- `model/model_config.json` (metadata performa & parameter model)
+
+### 🧪 Contoh Pemuatan Ulang & Pengujian Ulasan Baru
 
 ```python
 import joblib
 
-# Muat model pipeline hasil tuning
-model = joblib.load('model/model_sentimen.joblib')
+# 1. Muat ulang pipeline model terbaik
+pipeline = joblib.load('model_sentimen.joblib')
 
-# Ambang batas optimal dari model_config.json
-THRESHOLD = 0.49
-
-ulasan_uji = [
+# 2. Kalimat ulasan baru
+ulasan_baru = [
     "Masterpiece of RPG! The combat is smooth, story is deep, and visuals are breathtaking.",
-    "Not good at all. The combat is clunky and it has no fun gameplay loops.",
-    "Broken launch, heavy frame drops, constant crashing and game breaking bugs.",
-    "Great co-op fun with friends. Excellent soundtrack and challenging boss fights."
+    "Terrible experience. The game constantly crashes every 10 minutes and save files get corrupted.",
+    "Not good at all. I thought it would be fun, but the combat is clunky and gameplay loops are boring.",
+    "Great co-op fun with friends! Excellent soundtrack, responsive controls, and challenging boss fights.",
+    "Complete waste of money! Full of game-breaking bugs, laggy servers, and aggressive microtransactions.",
+    "The story is surprisingly emotional and voice acting is top notch. Definitely worth playing."
 ]
 
-# Prediksi menggunakan ambang batas probabilitas optimal
-probs_pos = model.predict_proba(ulasan_uji)[:, 1]
-predictions = (probs_pos >= THRESHOLD).astype(int)
+# 3. Prediksi label dan probabilitas
+prediksi = pipeline.predict(ulasan_baru)
+probabilitas = pipeline.predict_proba(ulasan_baru)
 
-for teks, pred, prob in zip(ulasan_uji, predictions, probs_pos):
+# 4. Tampilkan hasil
+for teks, pred, prob in zip(ulasan_baru, prediksi, probabilitas):
     label = "POSITIF" if pred == 1 else "NEGATIF"
-    conf = prob if pred == 1 else (1.0 - prob)
-    print(f"Ulasan   : \"{teks}\"")
-    print(f"Sentimen : {label} (Keyakinan: {conf*100:.2f}%)")
-    print("-" * 60)
+    confidence = prob[pred] * 100
+    print(f"[{label} ({confidence:.2f}%)] -> {teks}")
+```
+
+#### Hasil Pengujian:
+```text
+[POSITIF (86.65%)] -> Masterpiece of RPG! The combat is smooth, story is deep, and visuals are breathtaking.
+[NEGATIF (67.63%)] -> Terrible experience. The game constantly crashes every 10 minutes and save files get corrupted.
+[NEGATIF (93.63%)] -> Not good at all. I thought it would be fun, but the combat is clunky and gameplay loops are boring.
+[POSITIF (99.48%)] -> Great co-op fun with friends! Excellent soundtrack, responsive controls, and challenging boss fights.
+[NEGATIF (88.40%)] -> Complete waste of money! Full of game-breaking bugs, laggy servers, and aggressive microtransactions.
+[POSITIF (95.97%)] -> The story is surprisingly emotional and voice acting is top notch. Definitely worth playing.
 ```
 
 ---
