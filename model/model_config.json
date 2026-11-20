@@ -1,0 +1,9 @@
+{
+  "model_name": "Logistic Regression (balanced)",
+  "best_c": 10.0,
+  "best_threshold": 0.49,
+  "accuracy": 0.9453734671125975,
+  "macro_f1": 0.8725722983257229,
+  "f1_negative": 0.776255707762557,
+  "f1_positive": 0.9688888888888889
+}
